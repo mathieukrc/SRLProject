@@ -26,8 +26,8 @@ And install the remaining requirements.
 python3.8 -m pip install -r requirements.txt
 ```
 
+If you are not running this on the cluster, you will also need to install torch.
+```
+python3.8 -m pip install torch
+```
 
-You can then download the environment datasets by running:
-```
-python3.8 load_data.py
-```
