@@ -20,8 +20,9 @@ ground truth and the datasets and caches them in ./env_outputs, so later calls a
 import os
 from typing import Dict
 
-import controlled_env as ce
 import numpy as np
+
+import controlled.controlled_env as ce
 
 _GT = None  # cached ground-truth query object
 
@@ -84,6 +85,8 @@ def get_offline_observations(variant: str = "full") -> Dict[str, np.ndarray]:
         "actions": d["act"].astype(np.float32),
         "rewards": d["rew"].astype(np.float32),
         "costs": d["cost"].astype(np.float32),
+        "terminals": d["terminal"].astype(np.float32),
+        "timeouts": d["timeout"].astype(np.float32),
     }
 
 

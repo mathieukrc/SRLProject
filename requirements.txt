@@ -1,2 +1,5 @@
 h5py
 tqdm
+scipy
+scikit-learn
+matplotlib
