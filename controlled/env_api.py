@@ -18,7 +18,7 @@ ground truth and the datasets and caches them in ./env_outputs, so later calls a
 """
 
 import os
-from typing import Dict
+from typing import Dict, Tuple
 
 import numpy as np
 
@@ -133,3 +133,16 @@ if __name__ == "__main__":
     print("check_feasible on 4 hand-made states:", check_feasible(tests))
     print("expected: [True, True, False, False]")
     print("self-test passed")
+
+
+def compute_feasibility_metrics(
+    states: np.ndarray, feasible: np.ndarray
+) -> Dict[str, float]:
+    """
+    Args:
+        states: Array of shape (N, state_dim) containing a list of states
+        feasible: Array of shape (N,) containing whether the corresponding states are deemed feasible
+    Returns:
+        Proportion of states that are false-feasible and false-infeasible, as well as the Intersection over Union (IoU)
+    """
+    raise NotImplementedError()
