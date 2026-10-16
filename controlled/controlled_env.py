@@ -11,7 +11,7 @@ Ground-truth feasible set (same idea as FISOR / HJ reachability):
     boundary band  <=>  |V(s)| < EPS_BAND
 
 Run:  python controlled_env.py
-Outputs (in ./env_outputs): ground_truth.npz, dataset_full.npz, dataset_thin.npz, plots
+Outputs (in ./env_outputs): ground_truth.npz, dataset.npz, plots
 """
 
 import os
@@ -218,7 +218,7 @@ def boundary_policy_factory(rng, cfg=CFG):
 def collect(
     n_goal=300, n_random=200, n_boundary=300, seed=0, cfg=CFG, start_mode="random"
 ):
-    assert state_mode in ("random", "fixed")
+    assert start_mode in ("random", "fixed")
     rng = np.random.default_rng(seed)
     env = ControlledEnv(cfg, seed)
     rows = {
@@ -267,15 +267,14 @@ def collect(
     return {k: np.array(v) for k, v in rows.items()}
 
 
-def make_variants(data, gt, cfg=CFG):
-    """Full ('rich') dataset and a 'thin' variant with boundary-band states removed."""
+def annotate_dataset(data, gt, cfg=CFG):
+    """Add ground-truth annotations ('in_band', 'feasible') to a collected dataset."""
     q = GroundTruth(gt, cfg)
-    band = q.in_band(data["obs"])
-    feas = q.feasible(data["obs"])
-    data = dict(data, in_band=band, feasible=feas)
-    keep = ~band
-    thin = {k: v[keep] for k, v in data.items()}
-    return data, thin
+    return dict(
+        data,
+        in_band=q.in_band(data["obs"]),
+        feasible=q.feasible(data["obs"]),
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -345,7 +344,7 @@ def rollout_check(gt, cfg=CFG, n=300, seed=1):
     return res
 
 
-def plot_all(gt, data_full, data_thin, cfg=CFG, out=OUT_DIR):
+def plot_all(gt, data, cfg=CFG, out=OUT_DIR):
     import matplotlib
 
     matplotlib.use("Agg")
@@ -382,32 +381,24 @@ def plot_all(gt, data_full, data_thin, cfg=CFG, out=OUT_DIR):
     fig.savefig(os.path.join(out, "feasible_region_slices.png"), dpi=130)
     plt.close(fig)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.6))
-    for ax, d, title in zip(
-        axes,
-        [data_full, data_thin],
-        [
-            "Full dataset (rich boundary coverage)",
-            "Thin variant (boundary band removed)",
-        ],
-    ):
-        o = d["obs"]
-        ax.scatter(
-            o[:, 0],
-            o[:, 1],
-            s=1,
-            c=np.where(d["in_band"], "tab:red", "tab:blue"),
-            alpha=0.4,
-        )
-        for cx, cy, r in cfg["obstacles"]:
-            ax.add_patch(plt.Circle((cx, cy), r, fill=False, color="k"))
-        ax.set_xlim(-1, 1)
-        ax.set_ylim(-1, 1)
-        ax.set_aspect("equal")
-        ax.set_title(
-            f"{title}\n{len(o)} transitions, {int(d['in_band'].sum())} in boundary band (red)",
-            fontsize=9,
-        )
+    fig, ax = plt.subplots(1, 1, figsize=(5, 4.6))
+    o = data["obs"]
+    ax.scatter(
+        o[:, 0],
+        o[:, 1],
+        s=1,
+        c=np.where(data["in_band"], "tab:red", "tab:blue"),
+        alpha=0.4,
+    )
+    for cx, cy, r in cfg["obstacles"]:
+        ax.add_patch(plt.Circle((cx, cy), r, fill=False, color="k"))
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+    ax.set_aspect("equal")
+    ax.set_title(
+        f"Dataset coverage\n{len(o)} transitions, {int(data['in_band'].sum())} in boundary band (red)",
+        fontsize=9,
+    )
     fig.tight_layout()
     fig.savefig(os.path.join(out, "dataset_coverage.png"), dpi=130)
     plt.close(fig)
@@ -425,18 +416,14 @@ if __name__ == "__main__":
 
     print("collecting data ...")
     data = collect()
-    full, thin = make_variants(data, gt)
-    np.savez_compressed(os.path.join(OUT_DIR, "dataset_full.npz"), **full)
-    np.savez_compressed(os.path.join(OUT_DIR, "dataset_thin.npz"), **thin)
-    unsafe_frac = (full["cost"] > 0).mean()
+    data = annotate_dataset(data, gt)
+    np.savez_compressed(os.path.join(OUT_DIR, "dataset.npz"), **data)
+    unsafe_frac = (data["cost"] > 0).mean()
     print(
-        f"full dataset: {len(full['obs'])} transitions, "
-        f"{int(full['in_band'].sum())} in boundary band, "
+        f"dataset: {len(data['obs'])} transitions, "
+        f"{int(data['in_band'].sum())} in boundary band, "
         f"{unsafe_frac:.3f} with cost=1, "
-        f"{(~full['feasible']).mean():.3f} infeasible states"
+        f"{(~data['feasible']).mean():.3f} infeasible states"
     )
-    print(
-        f"thin dataset: {len(thin['obs'])} transitions, {int(thin['in_band'].sum())} in boundary band"
-    )
-    plot_all(gt, full, thin)
+    plot_all(gt, data)
     print(f"saved outputs to ./{OUT_DIR}")

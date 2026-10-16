@@ -1,10 +1,12 @@
 """
 Interface to the controlled environment, following the team's problem formulation.
 
-Two functions:
-    check_feasible(states)          -> bool array (N,)
-    get_offline_observations(...)   -> dict with 'observations', 'next_observations',
-                                       'actions', 'rewards', 'costs'
+Functions:
+    check_feasible(states)               -> bool array (N,)
+    get_offline_observations()           -> dict with 'observations', 'next_observations',
+                                            'actions', 'rewards', 'costs', 'terminals', 'timeouts'
+    compute_feasibility_metrics(s, feas) -> dict with false-feasible / false-infeasible
+                                            proportions and IoU
 
 Shapes (N transitions, n_dims = 4 state dimensions (x, y, vx, vy), action_dims = 2):
     observations       (N, 4)
@@ -14,15 +16,14 @@ Shapes (N transitions, n_dims = 4 state dimensions (x, y, vx, vy), action_dims =
     costs              (N,)
 
 Needs controlled_env.py in the same folder. The first call computes (or loads) the
-ground truth and the datasets and caches them in ./env_outputs, so later calls are fast.
+ground truth and the dataset and caches them in ./env_outputs, so later calls are fast.
 """
 
 import os
-from typing import Dict, Tuple
-
-import numpy as np
+from typing import Dict
 
 import controlled.controlled_env as ce
+import numpy as np
 
 _GT = None  # cached ground-truth query object
 
@@ -59,25 +60,20 @@ def check_feasible(states: np.ndarray) -> np.ndarray:
     return _ground_truth().feasible(states).astype(bool)
 
 
-def get_offline_observations(variant: str = "full") -> Dict[str, np.ndarray]:
+def get_offline_observations() -> Dict[str, np.ndarray]:
     """
-    Args:
-        variant: "full" (rich boundary coverage) or "thin" (boundary band removed)
     Returns:
         A dictionary with keys 'observations', 'next_observations', 'actions',
-        'rewards' and 'costs'. Loaded from the precomputed file if it exists,
-        otherwise generated (and saved) first.
+        'rewards', 'costs', 'terminals' and 'timeouts'. Loaded from the precomputed
+        file if it exists, otherwise generated (and saved) first.
     """
-    if variant not in ("full", "thin"):
-        raise ValueError("variant must be 'full' or 'thin'")
-    path = os.path.join(ce.OUT_DIR, f"dataset_{variant}.npz")
+    path = os.path.join(ce.OUT_DIR, "dataset.npz")
     if not os.path.exists(path):
         os.makedirs(ce.OUT_DIR, exist_ok=True)
         q = _ground_truth()
         gt = dict(V=q.V, pos=q.pos, vel=q.vel)
-        full, thin = ce.make_variants(ce.collect(), gt)
-        np.savez_compressed(os.path.join(ce.OUT_DIR, "dataset_full.npz"), **full)
-        np.savez_compressed(os.path.join(ce.OUT_DIR, "dataset_thin.npz"), **thin)
+        data = ce.annotate_dataset(ce.collect(), gt)
+        np.savez_compressed(path, **data)
     d = np.load(path)
     return {
         "observations": d["obs"].astype(np.float32),
@@ -90,49 +86,17 @@ def get_offline_observations(variant: str = "full") -> Dict[str, np.ndarray]:
     }
 
 
-def export_h5(path: str = "offline_dataset.h5", variant: str = "full") -> str:
-    """Optional: store a dataset variant in an h5 file (needs `pip install h5py`)."""
+def export_h5(path: str = "offline_dataset.h5") -> str:
+    """Optional: store the dataset in an h5 file (needs `pip install h5py`)."""
     try:
         import h5py
     except ImportError as e:
         raise ImportError("h5py is not installed: run  pip install h5py") from e
-    data = get_offline_observations(variant)
+    data = get_offline_observations()
     with h5py.File(path, "w") as f:
         for k, v in data.items():
             f.create_dataset(k, data=v, compression="gzip")
     return path
-
-
-if __name__ == "__main__":
-    # quick self-test
-    for variant in ("full", "thin"):
-        d = get_offline_observations(variant)
-        N = len(d["observations"])
-        shapes = {k: v.shape for k, v in d.items()}
-        print(f"[{variant}] N={N}  shapes={shapes}")
-        assert d["observations"].shape == (N, 4) and d["next_observations"].shape == (
-            N,
-            4,
-        )
-        assert (
-            d["actions"].shape == (N, 2)
-            and d["rewards"].shape == (N,)
-            and d["costs"].shape == (N,)
-        )
-        feas = check_feasible(d["observations"])
-        assert feas.shape == (N,) and feas.dtype == bool
-        print(f"[{variant}] feasible fraction of dataset states: {feas.mean():.3f}")
-    tests = np.array(
-        [
-            [-0.8, 0.8, 0.0, 0.0],  # far from obstacles, at rest   -> feasible
-            [0.4, 0.10, 0.0, 0.0],  # near obstacle, at rest        -> feasible
-            [0.4, 0.10, 0.0, -1.0],  # near obstacle, driving at it  -> infeasible
-            [0.8, 0.0, 1.0, 0.0],
-        ]
-    )  # near wall, moving at it fast  -> infeasible
-    print("check_feasible on 4 hand-made states:", check_feasible(tests))
-    print("expected: [True, True, False, False]")
-    print("self-test passed")
 
 
 def compute_feasibility_metrics(
@@ -144,5 +108,75 @@ def compute_feasibility_metrics(
         feasible: Array of shape (N,) containing whether the corresponding states are deemed feasible
     Returns:
         Proportion of states that are false-feasible and false-infeasible, as well as the Intersection over Union (IoU)
+
+        Keys:
+            false_feasible:   fraction of all N states that are truly infeasible but deemed feasible
+                              (the unsafe mistake)
+            false_infeasible: fraction of all N states that are truly feasible but deemed infeasible
+                              (overly conservative)
+            iou:              |deemed feasible AND truly feasible| / |deemed feasible OR truly feasible|
+                              (nan if neither set contains any state)
     """
-    raise NotImplementedError()
+    states = np.asarray(states)
+    pred = np.asarray(feasible).astype(bool)
+    if pred.ndim != 1 or len(pred) != len(states):
+        raise ValueError(
+            f"feasible must have shape (N,) matching states, got {pred.shape} for {len(states)} states"
+        )
+
+    true = check_feasible(states)
+
+    n = len(true)
+    tp = np.sum(pred & true)
+    fp = np.sum(pred & ~true)  # infeasible, deemed feasible
+    fn = np.sum(~pred & true)  # feasible, deemed infeasible
+    union = tp + fp + fn
+
+    return {
+        "false_feasible": float(fp / n) if n > 0 else float("nan"),
+        "false_infeasible": float(fn / n) if n > 0 else float("nan"),
+        "iou": float(tp / union) if union > 0 else float("nan"),
+    }
+
+
+if __name__ == "__main__":
+    # quick self-test
+    d = get_offline_observations()
+    N = len(d["observations"])
+    shapes = {k: v.shape for k, v in d.items()}
+    print(f"N={N}  shapes={shapes}")
+    assert d["observations"].shape == (N, 4) and d["next_observations"].shape == (
+        N,
+        4,
+    )
+    assert (
+        d["actions"].shape == (N, 2)
+        and d["rewards"].shape == (N,)
+        and d["costs"].shape == (N,)
+    )
+    feas = check_feasible(d["observations"])
+    assert feas.shape == (N,) and feas.dtype == bool
+    print(f"feasible fraction of dataset states: {feas.mean():.3f}")
+    tests = np.array(
+        [
+            [-0.8, 0.8, 0.0, 0.0],  # far from obstacles, at rest   -> feasible
+            [0.4, 0.10, 0.0, 0.0],  # near obstacle, at rest        -> feasible
+            [0.4, 0.10, 0.0, -1.0],  # near obstacle, driving at it  -> infeasible
+            [0.8, 0.0, 1.0, 0.0],
+        ]
+    )  # near wall, moving at it fast  -> infeasible
+    print("check_feasible on 4 hand-made states:", check_feasible(tests))
+    print("expected: [True, True, False, False]")
+
+    # metrics: the ground truth scored against itself must be perfect
+    m = compute_feasibility_metrics(d["observations"], feas)
+    assert (
+        m["false_feasible"] == 0.0 and m["false_infeasible"] == 0.0 and m["iou"] == 1.0
+    )
+    # ...and the complement must be maximally wrong
+    m = compute_feasibility_metrics(d["observations"], ~feas)
+    assert (
+        m["iou"] == 0.0
+        and abs(m["false_feasible"] + m["false_infeasible"] - 1.0) < 1e-9
+    )
+    print("self-test passed")

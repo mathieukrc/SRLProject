@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -6,9 +6,11 @@ from sklearn.mixture import GaussianMixture
 
 from .offline_dataset import OfflineDataset
 
-
-UncertaintyFunction = Callable[[torch.Tensor], torch.Tensor]
-ViolationFunction = Callable[[torch.Tensor], torch.Tensor]
+UncertaintyFunction = Callable[
+    [torch.Tensor], torch.Tensor
+]  # Uncertainty at a given state
+ViolationFunction = Callable[[torch.Tensor], torch.Tensor]  # relu(h(s) - V_h(s))
+ValidFunction = Callable[[torch.Tensor], torch.Tensor]  # usable chain start
 
 
 START_TARGETING_RULES = {
@@ -37,7 +39,8 @@ def _check_budget(budget: int) -> None:
     if not isinstance(budget, (int, np.integer)) or budget < 0:
         raise ValueError("budget must be a non-negative integer")
 
-def _make_generator(states: torch.Tensor, seed: int | None):
+
+def _make_generator(states: torch.Tensor, seed: Optional[int]):
     if seed is None:
         return None
 
@@ -46,6 +49,7 @@ def _make_generator(states: torch.Tensor, seed: int | None):
 
     return generator
 
+
 def _bounds(states: torch.Tensor):
     return states.min(dim=0).values, states.max(dim=0).values
 
@@ -53,7 +57,7 @@ def _bounds(states: torch.Tensor):
 def _uniform(
     states: torch.Tensor,
     budget: int,
-    generator: torch.Generator | None = None,
+    generator: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
 
     lower, upper = _bounds(states)
@@ -72,7 +76,7 @@ def _noise(
     states: torch.Tensor,
     budget: int,
     noise_scale: float = 0.05,
-    generator: torch.Generator | None = None,
+    generator: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
 
     if not np.isfinite(noise_scale) or noise_scale < 0:
@@ -108,7 +112,8 @@ def _candidates(
     budget: int,
     candidate_multiplier: int = 10,
     noise_scale: float = 0.05,
-    generator: torch.Generator | None = None,
+    generator: Optional[torch.Generator] = None,
+    valid_fn: Optional[ValidFunction] = None,
 ) -> torch.Tensor:
 
     if (
@@ -125,11 +130,14 @@ def _candidates(
 
     return torch.cat(
         [
-            _uniform(states, n_uniform, generator),
-            _noise(states, n_noise, noise_scale, generator),
+            _fill_valid(lambda n: _uniform(states, n, generator), n_uniform, valid_fn),
+            _fill_valid(
+                lambda n: _noise(states, n, noise_scale, generator), n_noise, valid_fn
+            ),
         ],
         dim=0,
     )
+
 
 def _scores(
     fn: Callable,
@@ -143,21 +151,65 @@ def _scores(
         raise TypeError(f"{name} must return a torch.Tensor")
 
     if values.device != candidates.device:
-        raise ValueError(
-            f"{name} must return scores on the same device as candidates"
-        )
+        raise ValueError(f"{name} must return scores on the same device as candidates")
 
     values = values.reshape(-1)
 
     if values.shape[0] != candidates.shape[0]:
-        raise ValueError(
-            f"{name} must return one value per candidate"
-        )
+        raise ValueError(f"{name} must return one value per candidate")
 
     if not torch.isfinite(values).all().item():
         raise ValueError(f"{name} returned non-finite values")
 
     return values
+
+
+def _mask(fn: ValidFunction, candidates: torch.Tensor) -> torch.Tensor:
+    with torch.no_grad():
+        m = fn(candidates).reshape(-1)
+    if m.dtype != torch.bool or m.shape[0] != candidates.shape[0]:
+        raise ValueError("valid_fn must return one bool per candidate")
+    return m
+
+
+def _fill_valid(
+    sample_fn, n: int, valid_fn: Optional[ValidFunction], max_tries: int = 20
+):
+    if valid_fn is None or n == 0:
+        return sample_fn(n)
+    kept, total = [], 0
+    for _ in range(max_tries):
+        batch = sample_fn(max(2 * (n - total), 16))
+        batch = batch[_mask(valid_fn, batch)]
+        kept.append(batch)
+        total += len(batch)
+        if total >= n:
+            return torch.cat(kept)[:n]
+    raise ValueError(
+        f"Only {total}/{n} valid samples after {max_tries} tries; check valid_fn"
+    )
+
+
+def _select(scores: torch.Tensor, k: int, generator=None, beta: Optional[float] = 1.0):
+    if k == 0:
+        return torch.empty(0, dtype=torch.long, device=scores.device)
+    if k > scores.shape[0]:
+        raise ValueError("k larger than number of candidates")
+    if beta is None:
+        return torch.topk(scores, k=k).indices
+    w = scores.clamp_min(0)
+    w = (w / (w.max() + 1e-12)) ** beta + 1e-8  # all-zero scores -> uniform
+    return torch.multinomial(w, k, replacement=False, generator=generator)
+
+
+def _two_tier(
+    primary: torch.Tensor, rank_scores: torch.Tensor, k: int, generator, beta
+):
+    p_idx, o_idx = torch.where(primary)[0], torch.where(~primary)[0]
+    n_p = min(k, len(p_idx))
+    chosen_p = p_idx[_select(rank_scores[p_idx], n_p, generator, beta)]
+    chosen_o = o_idx[_select(rank_scores[o_idx], k - n_p, generator, beta)]
+    return torch.cat([chosen_p, chosen_o])
 
 
 def _violations(
@@ -172,10 +224,12 @@ def _violations(
         "violation_fn",
     )
 
-    if values.dtype != torch.bool:
+    if not values.is_floating_point():
         raise TypeError(
-            "violation_fn must return a boolean tensor"
+            "violation_fn must return float scores, e.g. relu(h(s) - V_h(s))"
         )
+    if (values < 0).any().item():
+        raise ValueError("violation_fn scores must be non-negative")
 
     return values
 
@@ -184,10 +238,12 @@ def _violations(
 # 1. Random sampling
 # --------------------------------------------------
 
+
 def random_chain_start_picker(
     obs: OfflineDataset,
     budget: int,
-    seed: int | None = None,
+    seed: Optional[int] = None,
+    valid_fn: Optional[ValidFunction] = None,
 ) -> torch.Tensor:
 
     _check_budget(budget)
@@ -195,18 +251,20 @@ def random_chain_start_picker(
 
     generator = _make_generator(states, seed)
 
-    return _uniform(states, budget, generator)
+    return _fill_valid(lambda n: _uniform(states, n, generator), budget, valid_fn)
 
 
 # --------------------------------------------------
 # 2. Density-matched sampling
 # --------------------------------------------------
 
+
 def density_matched_chain_start_picker(
     obs: OfflineDataset,
     budget: int,
     n_components: int = 5,
-    seed: int = 42,
+    seed: Optional[int] = None,
+    valid_fn: Optional[ValidFunction] = None,
 ) -> torch.Tensor:
     """Sample states from a GMM fitted to offline observations."""
 
@@ -231,32 +289,29 @@ def density_matched_chain_start_picker(
     )
 
     model.fit(data)
-
-    generated, _ = model.sample(budget)
-
-    result = torch.as_tensor(
-        generated,
-        dtype=states.dtype,
-        device=states.device,
-    )
+    model.random_state = np.random.RandomState(seed)
 
     lower, upper = _bounds(states)
 
-    return torch.maximum(
-        torch.minimum(result, upper),
-        lower,
-    )
+    def sample_fn(n):
+        generated, _ = model.sample(n)
+        out = torch.as_tensor(generated, dtype=states.dtype, device=states.device)
+        return torch.maximum(torch.minimum(out, upper), lower)
+
+    return _fill_valid(sample_fn, budget, valid_fn)
 
 
 # --------------------------------------------------
 # 3. Gaussian noise augmentation
 # --------------------------------------------------
 
+
 def noise_augmentation_chain_start_picker(
     obs: OfflineDataset,
     budget: int,
     noise_scale: float = 0.05,
-    seed: int | None = None,
+    seed: Optional[int] = None,
+    valid_fn: Optional[ValidFunction] = None,
 ) -> torch.Tensor:
 
     _check_budget(budget)
@@ -264,19 +319,24 @@ def noise_augmentation_chain_start_picker(
 
     generator = _make_generator(states, seed)
 
-    return _noise(states, budget, noise_scale, generator)
+    return _fill_valid(
+        lambda n: _noise(states, n, noise_scale, generator), budget, valid_fn
+    )
 
 
 # --------------------------------------------------
 # 4. Uncertainty-guided sampling
 # --------------------------------------------------
 
+
 def uncertainty_guided_chain_start_picker(
     obs: OfflineDataset,
     budget: int,
     uncertainty_fn: UncertaintyFunction,
     candidate_multiplier: int = 10,
-    seed: int | None = None,
+    seed: Optional[int] = None,
+    valid_fn: Optional[ValidFunction] = None,
+    beta: Optional[float] = 1.0,
 ) -> torch.Tensor:
     """Select candidate states with highest model uncertainty."""
 
@@ -289,22 +349,10 @@ def uncertainty_guided_chain_start_picker(
     generator = _make_generator(states, seed)
 
     candidates = _candidates(
-        states,
-        budget,
-        candidate_multiplier,
-        generator=generator,
+        states, budget, candidate_multiplier, generator=generator, valid_fn=valid_fn
     )
-
-    scores = _scores(
-        uncertainty_fn,
-        candidates,
-        "uncertainty_fn",
-    )
-
-    indices = torch.topk(
-        scores, k=budget, largest=True
-    ).indices
-
+    scores = _scores(uncertainty_fn, candidates, "uncertainty_fn")
+    indices = _select(scores, budget, generator, beta)  # was: torch.topk(...)
     return candidates[indices]
 
 
@@ -312,12 +360,16 @@ def uncertainty_guided_chain_start_picker(
 # 5. Violation-guided sampling
 # --------------------------------------------------
 
+
 def violation_guided_chain_start_picker(
     obs: OfflineDataset,
     budget: int,
     violation_fn: ViolationFunction,
     candidate_multiplier: int = 10,
-    seed: int | None = None,
+    seed: Optional[int] = None,
+    valid_fn: Optional[ValidFunction] = None,
+    beta: Optional[float] = 1.0,
+    margin: float = 1e-3,
 ) -> torch.Tensor:
     """Prioritize states where critic and safety model disagree."""
 
@@ -330,26 +382,10 @@ def violation_guided_chain_start_picker(
     generator = _make_generator(states, seed)
 
     candidates = _candidates(
-        states,
-        budget,
-        candidate_multiplier,
-        generator=generator,
+        states, budget, candidate_multiplier, generator=generator, valid_fn=valid_fn
     )
-
-    violations = _violations(
-        violation_fn,
-        candidates,
-    )
-
-    violating_indices = torch.where(violations)[0]
-    other_indices = torch.where(~violations)[0]
-
-    # If there are fewer than budget violations,
-    # fill remaining positions with other candidates.
-    indices = torch.cat(
-        [violating_indices, other_indices]
-    )[:budget]
-
+    viol = _violations(violation_fn, candidates)
+    indices = _two_tier(viol > margin, viol, budget, generator, beta)
     return candidates[indices]
 
 
@@ -357,13 +393,17 @@ def violation_guided_chain_start_picker(
 # 6. Combined violation + uncertainty sampling
 # --------------------------------------------------
 
+
 def combined_chain_start_picker(
     obs: OfflineDataset,
     budget: int,
     uncertainty_fn: UncertaintyFunction,
     violation_fn: ViolationFunction,
     candidate_multiplier: int = 10,
-    seed: int | None = None,
+    seed: Optional[int] = None,
+    valid_fn: Optional[ValidFunction] = None,
+    beta: Optional[float] = 1.0,
+    margin: float = 1e-3,
 ) -> torch.Tensor:
     """
     First prioritize violating states.
@@ -379,45 +419,9 @@ def combined_chain_start_picker(
     generator = _make_generator(states, seed)
 
     candidates = _candidates(
-        states,
-        budget,
-        candidate_multiplier,
-        generator=generator,
+        states, budget, candidate_multiplier, generator=generator, valid_fn=valid_fn
     )
-
-    uncertainty = _scores(
-        uncertainty_fn,
-        candidates,
-        "uncertainty_fn",
-    )
-
-    violations = _violations(
-        violation_fn,
-        candidates,
-    )
-
-    violating_indices = torch.where(violations)[0]
-    other_indices = torch.where(~violations)[0]
-
-    # Rank each group by uncertainty.
-    violating_sorted = violating_indices[
-        torch.argsort(
-            uncertainty[violating_indices],
-            descending=True,
-        )
-    ]
-
-    other_sorted = other_indices[
-        torch.argsort(
-            uncertainty[other_indices],
-            descending=True,
-        )
-    ]
-
-    # Prefer violations, filling any shortage with
-    # highest-uncertainty non-violating candidates.
-    selected = torch.cat(
-        [violating_sorted, other_sorted]
-    )[:budget]
-
-    return candidates[selected]
+    uncertainty = _scores(uncertainty_fn, candidates, "uncertainty_fn")
+    viol = _violations(violation_fn, candidates)
+    indices = _two_tier(viol > margin, uncertainty, budget, generator, beta)
+    return candidates[indices]
