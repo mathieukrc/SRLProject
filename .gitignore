@@ -2,3 +2,6 @@ env_outputs/
 __pychache__/ 
 .venv/
 DSRL/
+
+__pycache__/
+*.pyc
