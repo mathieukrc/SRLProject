@@ -79,10 +79,6 @@ def h_car_circle(s: np.ndarray) -> float:
     return abs(x) - 6.0
 
 
-
-
-
-
 def h_point_goal(s: np.ndarray) -> float:
     """
     Approximate PointGoal1 safety constraint from the observation.

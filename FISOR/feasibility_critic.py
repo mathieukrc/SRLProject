@@ -1,6 +1,6 @@
 import copy
 import warnings
-from typing import Dict, List, Sequence, TypedDict
+from typing import Dict, Sequence
 
 import numpy as np
 import torch
@@ -9,23 +9,11 @@ from architectures.ensemble import Ensemble
 from architectures.mlp import MLP
 from data.batch import Batch
 
+from .critic_config import CriticConfig
 from .loss_functions import safe_expectile_loss, soft_update
 
 FORMAT_VERSION = 1
 ARCH_KEYS = ("obs_dim", "act_dim", "hidden_dims", "num_qs")
-
-
-class FeasibilityCriticConfig(TypedDict):
-    obs_dim: int
-    act_dim: int
-    hidden_dims: List[int]
-    num_qs: int
-    discount: float
-    tau: float
-    expectile: float
-    critic_lr: float
-    value_lr: float
-    critic_batch_size: int
 
 
 class FeasibilityCritic:
@@ -36,7 +24,7 @@ class FeasibilityCritic:
     value_opt: torch.optim.Optimizer
     device: torch.device
     num_updates: int
-    config: FeasibilityCriticConfig
+    config: CriticConfig
 
     def __init__(
         self,
@@ -46,7 +34,7 @@ class FeasibilityCritic:
         num_qs: int = 2,
         discount: float = 0.99,
         tau: float = 0.005,
-        expectile: float = 0.9,
+        expectile: float = 0.8,
         critic_lr: float = 3e-4,
         value_lr: float = 3e-4,
         critic_batch_size: int = 256,
@@ -54,7 +42,7 @@ class FeasibilityCritic:
     ) -> None:
         self.device = torch.device(device)
 
-        self.config = FeasibilityCriticConfig(
+        self.config = CriticConfig(
             obs_dim=obs_dim,
             act_dim=act_dim,
             hidden_dims=list(hidden_dims),
@@ -68,13 +56,13 @@ class FeasibilityCritic:
         )
 
         self.safe_critic = Ensemble(
-            lambda: MLP(obs_dim + act_dim, hidden_dims), num=num_qs
+            lambda: MLP(obs_dim + act_dim, hidden_dims=hidden_dims), num=num_qs
         ).to(self.device)
 
         self.safe_target_critic = copy.deepcopy(self.safe_critic)
         self.safe_target_critic.requires_grad_(False)
 
-        self.safe_value = MLP(obs_dim, hidden_dims).to(self.device)
+        self.safe_value = MLP(obs_dim, hidden_dims=hidden_dims).to(self.device)
 
         self.critic_opt = torch.optim.Adam(self.safe_critic.parameters(), lr=critic_lr)
         self.value_opt = torch.optim.Adam(self.safe_value.parameters(), lr=value_lr)
@@ -90,6 +78,9 @@ class FeasibilityCritic:
             )
 
         vc = self.safe_value(obs)
+
+        assert qc.shape == vc.shape == obs.shape[:1]
+
         loss = safe_expectile_loss(qc - vc, self.config["expectile"]).mean()
 
         self.value_opt.zero_grad(set_to_none=True)
@@ -135,11 +126,11 @@ class FeasibilityCritic:
 
         with torch.no_grad():
             return {
-                "safe_critic_loss": safe_critic_loss,
-                "qc": qcs.mean(),
-                "qc_max": qcs.max(),
-                "qc_min": qcs.min(),
-                "costs": costs.mean(),
+                "safe_critic_loss": safe_critic_loss.item(),
+                "qc": qcs.mean().item(),
+                "qc_max": qcs.max().item(),
+                "qc_min": qcs.min().item(),
+                "costs": costs.mean().item(),
             }
 
     def update(self, batch: Batch) -> Dict[str, float]:

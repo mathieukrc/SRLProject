@@ -43,9 +43,27 @@ def cost_to_h(costs: np.ndarray, cost_scale: float = 25.0) -> np.ndarray:
     return np.where(costs > 0, cost_scale, -1.0).astype(np.float32)
 
 
-def compute_masks(terminals: np.ndarray, timeouts: np.ndarray) -> np.ndarray:
-    dones = np.logical_or(terminals, timeouts).astype(np.float32)
+def compute_masks(
+    terminals: np.ndarray, timeouts: np.ndarray, timeout_is_done: bool = True
+) -> np.ndarray:
+    dones = (
+        np.logical_or(terminals, timeouts).astype(np.float32)
+        if timeout_is_done
+        else terminals.astype(np.float32)
+    )
     return 1.0 - dones
+
+
+def normalise_rewards(
+    rewards: np.ndarray,
+    max_episode_reward: float,
+    min_episode_reward: float,
+    scaling: float,
+) -> np.ndarray:
+    reward_range = max_episode_reward - min_episode_reward
+    if reward_range <= 0:
+        raise ValueError("max_episode_reward must exceed min_episode reward")
+    return rewards / reward_range * scaling
 
 
 def load_all_dsrl() -> None:
