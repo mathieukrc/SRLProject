@@ -63,3 +63,48 @@ def cost_controlled_env(data: Dict[str, np.ndarray]) -> Callable[[float, float],
         return int(any(np.hypot(x - cx, y - cy) <= r for cx, cy, r in fitted))
 
     return cost
+
+
+def h_car_circle(s: np.ndarray) -> float:
+    """
+    Analytical safety constraint for CarCircle.
+
+    Args:
+        s: Physical agent state with world x-coordinate at index 0.
+
+    Returns:
+        h(s) <= 0 if safe, h(s) > 0 if unsafe.
+    """
+    x = float(np.asarray(s)[0])
+    return abs(x) - 6.0
+
+
+
+
+
+
+def h_point_goal(s: np.ndarray) -> float:
+    """
+    Approximate PointGoal1 safety constraint from the observation.
+
+    PointGoal1 hazards have radius 0.2.
+    The pseudo-lidar maximum detection distance is 3.0.
+
+    Returns:
+        h(s) > 0: estimated position is inside a hazard.
+        h(s) <= 0: estimated position is outside hazards.
+    """
+    s = np.asarray(s, dtype=float).ravel()
+
+    if s.size != 60:
+        raise ValueError(f"Expected 60 observation features, got {s.size}")
+
+    # Observation layout: 12 agent features, followed by
+    # 16 goal-lidar, 16 hazard-lidar, and 16 vase-lidar values.
+    hazard_lidar = s[28:44]
+
+    # Convert the strongest pseudo-lidar reading into an
+    # estimated distance to the nearest detected hazard.
+    nearest_distance = 3.0 * (1.0 - np.clip(np.max(hazard_lidar), 0.0, 1.0))
+
+    return float(0.2 - nearest_distance)
