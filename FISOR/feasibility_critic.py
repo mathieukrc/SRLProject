@@ -5,11 +5,11 @@ from typing import Dict, List, Sequence, TypedDict
 import numpy as np
 import torch
 
+from architectures.ensemble import Ensemble
+from architectures.mlp import MLP
 from data.batch import Batch
 
-from .ensemble import Ensemble
 from .loss_functions import safe_expectile_loss, soft_update
-from .mlp import MLP
 
 FORMAT_VERSION = 1
 ARCH_KEYS = ("obs_dim", "act_dim", "hidden_dims", "num_qs")

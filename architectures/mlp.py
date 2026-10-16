@@ -12,6 +12,7 @@ class MLP(nn.Module):
     def __init__(
         self,
         in_dim: int,
+        out_dim: int = 1,
         hidden_dims: Sequence[int] = (256, 256),
         activation: Callable[[], nn.Module] = nn.ReLU,
     ) -> None:
@@ -20,7 +21,7 @@ class MLP(nn.Module):
         self.layers = nn.ModuleList(
             nn.Linear(a, b) for a, b in zip(dims[:-1], dims[1:])
         )
-        self.head = nn.Linear(dims[-1], 1)
+        self.head = nn.Linear(dims[-1], out_dim)
         self.activation = activation()
 
         for layer in [*self.layers, self.head]:
