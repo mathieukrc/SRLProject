@@ -1,5 +1,6 @@
 import os
 import random
+from typing import Dict
 
 import dsrl
 import gymnasium as gym
@@ -31,12 +32,11 @@ def list_envs() -> None:
     print(sorted(k for k in gym.envs.registry if k.startswith("Offline")))
 
 
-def load_dsrl_dict(name: str) -> None:
+def load_dsrl_dict(name: str) -> Dict[str, np.ndarray]:
     env = gym.make(name)
     dataset = env.get_dataset()
 
-    for k, v in dataset.items():
-        print(k, v.shape)
+    return dataset
 
 
 def cost_to_h(costs: np.ndarray, cost_scale: float = 25.0) -> np.ndarray:

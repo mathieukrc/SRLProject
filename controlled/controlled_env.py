@@ -254,7 +254,7 @@ def collect(
                         c,
                         float(done),
                         src,
-                        float(info["out_of_arena"]),
+                        float(info["out_of_arena"] or done),
                         float(info["timeout"]),
                     ],
                 ):

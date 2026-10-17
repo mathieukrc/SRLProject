@@ -145,6 +145,8 @@ class FISORAgent:
             weight_decay=config.actor_weight_decay,
             actor_tau=config.actor_tau,
             device=device,
+            lr=config.actor_lr,
+            decay_steps=config.decay_steps,
         )
 
         self.step = 0
@@ -211,13 +213,14 @@ class FISORAgent:
         obs_rep = obs_t.repeat_interleave(num_candidates, dim=0)
 
         actions = self.actor.sample(
-            obs_rep,
+            obs_t,
             num_samples=self.config.N,
             use_target=True,
             temperature=self.config.ddpm_temperature,
             repeat_last_step=self.config.M,
             clip_sampler=self.config.clip_sampler,
         )
+        actions = actions.reshape((batch_size * self.config.N, self.act_dim))
 
         q_h = self.feasibility_critic.q_h(obs_rep, actions, use_target=True)
         q_h = q_h.view(batch_size, num_candidates)

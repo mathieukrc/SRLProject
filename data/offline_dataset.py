@@ -22,11 +22,17 @@ class OfflineDataset:
         n_members: int = 1,
         seed: Optional[int] = None,
         timeout_is_done: bool = True,
+        h_source: str = "binary",
     ) -> None:
         self.device = torch.device(device)
         data_dict = dict(dataset_dict)
 
-        costs = cost_to_h(data_dict["costs"], cost_scale)
+        if h_source == "binary":
+            costs = cost_to_h(data_dict["costs"], cost_scale)
+        elif h_source == "dense":
+            costs = torch.tensor(data_dict["costs"]) * cost_scale
+        else:
+            raise ValueError("h_source must be one of {'binary', 'dense'}.")
 
         masks = compute_masks(
             data_dict["terminals"],
