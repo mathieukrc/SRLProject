@@ -1,3 +1,4 @@
+import copy
 from typing import Dict, Optional
 
 import numpy as np
@@ -41,6 +42,7 @@ class OfflineDataset:
             "actions": actions,
             "next_observations": data_dict["next_observations"],
             "costs": costs.reshape(-1),
+            "rewards": data_dict["rewards"],
             "masks": masks.reshape(-1),
         }
 
@@ -84,3 +86,12 @@ class OfflineDataset:
                 for k, v in self.data.items()
             }
         )
+
+    def subset(self, index: np.ndarray):
+        sub = copy.deepcopy(self)
+        index_tensor = torch.tensor(index, device=self.device)
+
+        sub.data = {
+            k: (v[:, index_tensor] if k == "bootstrap_weights" else v[index_tensor])
+            for k, v in self.data.items()
+        }

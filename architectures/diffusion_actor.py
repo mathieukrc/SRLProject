@@ -61,7 +61,7 @@ class DiffusionActor:
         self,
         batch: dict,
         weights: torch.Tensor,
- w        generator: Optional[torch.Generator] = None,
+        generator: Optional[torch.Generator] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         obs, actions = batch["observations"], batch["actions"]
         B = actions.shape[0]

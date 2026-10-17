@@ -139,7 +139,7 @@ class FISORAgent:
             model_kwargs={
                 "time_dim": config.time_dim,
                 "num_blocks": config.actor_num_blocks,
-                "droput_rate": config.actor_dropout_rate,
+                "dropout_rate": config.actor_dropout_rate,
                 "use_layer_norm": config.actor_layer_norm,
             },
             weight_decay=config.actor_weight_decay,

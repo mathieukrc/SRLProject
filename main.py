@@ -16,9 +16,9 @@ from train.train import train_feasibility_critic
 if __name__ == "__main__":
     name = "test_probability"
     # n_members = 5
-    # dataset = OfflineDataset(
-    #     get_offline_observations(), timeout_is_done=False, n_members=5
-    # )
+    dataset = OfflineDataset(
+        get_offline_observations(), timeout_is_done=False, n_members=5
+    )
     #
     # evaluation_sets = evaluation_sets_controlled_env(dataset)
     #

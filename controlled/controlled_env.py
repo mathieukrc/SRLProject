@@ -38,7 +38,7 @@ CFG = dict(
     eps_band=0.02,  # boundary band |V| < eps_band
 )
 
-OUT_DIR = "env_outputs"
+OUT_DIR = os.path.join("controlled", "env_outputs")
 
 
 # ----------------------------------------------------------------------------

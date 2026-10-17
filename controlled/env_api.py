@@ -22,8 +22,9 @@ ground truth and the dataset and caches them in ./env_outputs, so later calls ar
 import os
 from typing import Dict
 
-import controlled.controlled_env as ce
 import numpy as np
+
+import controlled.controlled_env as ce
 
 _GT = None  # cached ground-truth query object
 
