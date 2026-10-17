@@ -95,3 +95,5 @@ class OfflineDataset:
             k: (v[:, index_tensor] if k == "bootstrap_weights" else v[index_tensor])
             for k, v in self.data.items()
         }
+
+        return sub

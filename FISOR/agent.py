@@ -91,7 +91,7 @@ class FISORAgent:
     actor: DiffusionActor
     generator: Optional[torch.Generator]
     device: torch.device
-    step_counter: int
+    step: int
     config: FISORConfig
     obs_dim: int
     act_dim: int
@@ -147,7 +147,7 @@ class FISORAgent:
             device=device,
         )
 
-        self.step_counter = 0
+        self.step = 0
         self.config = config
         self.act_dim = act_dim
         self.obs_dim = obs_dim
@@ -190,6 +190,8 @@ class FISORAgent:
         info3 = self.reward_critic.update(mini_batch)
         info4 = self.feasibility_critic.update(mini_batch)
 
+        self.step += 1
+
         return {
             **{"actor1/" + k: v for k, v in info1.items()},
             **{"actor2/" + k: v for k, v in info2.items()},
@@ -209,7 +211,12 @@ class FISORAgent:
         obs_rep = obs_t.repeat_interleave(num_candidates, dim=0)
 
         actions = self.actor.sample(
-            obs_rep, num_samples=obs_rep.shape[0], use_target=True
+            obs_rep,
+            num_samples=self.config.N,
+            use_target=True,
+            temperature=self.config.ddpm_temperature,
+            repeat_last_step=self.config.M,
+            clip_sampler=self.config.clip_sampler,
         )
 
         q_h = self.feasibility_critic.q_h(obs_rep, actions, use_target=True)
