@@ -1,6 +1,6 @@
 import copy
 import warnings
-from typing import Dict, Sequence
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import torch
@@ -9,6 +9,7 @@ from architectures.vectorized_mlp import VectorizedMLP
 from data.batch import WeightedBatch
 
 from .critic_config import EnsembleCriticConfig
+from .anchors import anchor_lower_bound_loss
 from .loss_functions import safe_expectile_loss, soft_update, weighted_mean
 
 FORMAT_VERSION = 1
@@ -79,7 +80,12 @@ class EnsembleFeasibilityCritic:
         q = critic(x)
         return q.reshape(self.config["K"], self.config["num_qs"], q.shape[-1])
 
-    def update_vc(self, batch: WeightedBatch) -> Dict[str, float]:
+    def update_vc(
+        self,
+        batch: WeightedBatch,
+        anchors: Optional[dict] = None,
+        anchor_weight: float = 0.0,
+    ) -> Dict[str, float]:
         obs, act, w = (
             batch["observations"],
             batch["actions"],
@@ -97,6 +103,18 @@ class EnsembleFeasibilityCritic:
             safe_expectile_loss(qc - vc, self.config["expectile"]), w
         ).sum()
 
+        anchor_info = {}
+        if anchors is not None and anchor_weight > 0:
+            va = self.safe_value(anchors["observations"])
+            a_loss = anchor_lower_bound_loss(
+                va, anchors["h"], anchors.get("bootstrap_weights")
+            )
+            loss = loss + anchor_weight * a_loss
+            anchor_info = {
+                "anchor_loss": a_loss.item(),
+                "anchor_violation_rate": (va < anchors["h"]).float().mean().item(),
+            }
+
         self.value_opt.zero_grad(set_to_none=True)
         loss.backward()
         self.value_opt.step()
@@ -107,6 +125,7 @@ class EnsembleFeasibilityCritic:
                 "vc": vc.mean().item(),
                 "vc_max": vc.max().item(),
                 "vc_min": vc.min().item(),
+                **anchor_info,
             }
 
     def update_qc(self, batch: WeightedBatch) -> Dict[str, float]:
@@ -149,14 +168,24 @@ class EnsembleFeasibilityCritic:
                 "costs": costs.mean().item(),
             }
 
-    def update(self, batch: WeightedBatch) -> Dict[str, float]:
+    def update(
+        self,
+        batch: WeightedBatch,
+        anchors: Optional[dict] = None,
+        anchor_weight: float = 0.0,
+    ) -> Dict[str, float]:
         n = self.config["critic_batch_size"]
         mini_batch = {
             k: (v[:, :n] if k == "bootstrap_weights" else v[:n])
             for k, v in batch.items()
+            if k != "is_synthetic"
         }
+        if "bootstrap_weights" not in mini_batch:
+            mini_batch["bootstrap_weights"] = torch.ones(
+                (self.config["K"], len(mini_batch["observations"])), device=self.device
+            )
 
-        value_info = self.update_vc(mini_batch)
+        value_info = self.update_vc(mini_batch, anchors, anchor_weight)
         critic_info = self.update_qc(mini_batch)
 
         self.num_updates += 1

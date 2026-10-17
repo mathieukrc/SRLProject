@@ -35,7 +35,7 @@ def dummy_uncertainty(states):
 
 
 def dummy_violation(states):
-    return states[:, 1] > 0.0
+    return torch.relu(states[:, 1])  # float scores, like relu(h - V)
 
 
 def main():
@@ -103,8 +103,8 @@ def main():
     print("PASSED")
 
     # 2. Violation-guided sampling
-    random_violation_rate = dummy_violation(random_states).float().mean()
-    guided_violation_rate = dummy_violation(violation_states).float().mean()
+    random_violation_rate = (dummy_violation(random_states) > 0).float().mean()
+    guided_violation_rate = (dummy_violation(violation_states) > 0).float().mean()
 
     print("\nViolation-guided:")
     print("Random violation rate:", random_violation_rate.item())
@@ -114,7 +114,7 @@ def main():
     print("PASSED")
 
     # 3. Combined sampling
-    combined_violation_rate = dummy_violation(combined_states).float().mean()
+    combined_violation_rate = (dummy_violation(combined_states) > 0).float().mean()
 
     print("\nCombined:")
     print("Combined violation rate:", combined_violation_rate.item())
@@ -122,8 +122,8 @@ def main():
     assert combined_violation_rate >= random_violation_rate
 
     # Compare uncertainty only among violating states
-    combined_mask = dummy_violation(combined_states)
-    violation_mask = dummy_violation(violation_states)
+    combined_mask = dummy_violation(combined_states) > 0
+    violation_mask = dummy_violation(violation_states) > 0
 
     if combined_mask.any() and violation_mask.any():
         combined_uncertainty = dummy_uncertainty(

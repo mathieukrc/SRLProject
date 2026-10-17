@@ -113,7 +113,9 @@ class RewardCritic:
 
     def update(self, batch: Batch) -> Dict[str, float]:
         mini_batch = {
-            k: v[: self.config["critic_batch_size"]] for k, v in batch.items()
+            k: v[: self.config["critic_batch_size"]]
+            for k, v in batch.items()
+            if k not in ("bootstrap_weights", "is_synthetic")
         }
 
         value_info = self.update_v(mini_batch)

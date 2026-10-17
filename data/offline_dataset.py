@@ -64,6 +64,7 @@ class OfflineDataset:
             for k, v in arrays.items()
         }
 
+        self.source_index = np.arange(n)  # row -> index in the original dataset
         self.set_bootstrap_weights(n_members)
 
         self._generator = torch.Generator(device=self.device)
@@ -128,8 +129,14 @@ class OfflineDataset:
         )
 
     def subset(self, index: np.ndarray):
-        sub = copy.deepcopy(self)
-        index_tensor = torch.tensor(index, device=self.device)
+        index = np.asarray(index, dtype=np.int64)
+        data, self.data = self.data, {}  # avoid deep-copying every tensor
+        try:
+            sub = copy.deepcopy(self)
+        finally:
+            self.data = data
+        index_tensor = torch.as_tensor(index, device=self.device)
+        sub.source_index = self.source_index[index]
 
         sub.data = {
             k: (v[:, index_tensor] if k == "bootstrap_weights" else v[index_tensor])

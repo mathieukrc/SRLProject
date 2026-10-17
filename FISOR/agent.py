@@ -3,7 +3,7 @@ import math
 import os
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -12,6 +12,7 @@ from architectures.diffusion_actor import DiffusionActor
 from architectures.diffusion_schedule import DiffusionSchedule
 from data.batch import Batch
 
+from .ensemble_feasibility_critic import EnsembleFeasibilityCritic
 from .feasibility_critic import FeasibilityCritic
 from .reward_critic import RewardCritic
 
@@ -102,6 +103,9 @@ class FISORAgent:
         act_dim: int,
         config: FISORConfig,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        feasibility_critic: Optional[
+            Union[FeasibilityCritic, EnsembleFeasibilityCritic]
+        ] = None,
     ) -> None:
         self.device = torch.device(device)
         self.generator = torch.Generator(self.device)
@@ -119,7 +123,7 @@ class FISORAgent:
             device=device,
             critic_batch_size=config.critic_batch_size,
         )
-        self.feasibility_critic = FeasibilityCritic(
+        self.feasibility_critic = feasibility_critic or FeasibilityCritic(
             obs_dim,
             act_dim,
             config.critic_hidden_dims,
@@ -173,11 +177,32 @@ class FISORAgent:
             self.config.cost_ub,
         )
 
-    def update(self, batch: Batch) -> Dict[str, float]:
-        half = self.config.batch_size // 2
+    @staticmethod
+    def _rows(batch: dict, idx) -> dict:
+        """Select rows; bootstrap_weights are (K, B) so they are indexed on dim 1."""
+        return {
+            k: (v[:, idx] if k == "bootstrap_weights" else v[idx])
+            for k, v in batch.items()
+        }
 
-        first_half = {k: v[:half] for k, v in batch.items()}
-        second_half = {k: v[half:] for k, v in batch.items()}
+    def update(
+        self,
+        batch: Batch,
+        anchors: Optional[dict] = None,
+        anchor_weight: float = 0.0,
+        use_synthetic_actions: bool = False,
+    ) -> Dict[str, float]:
+        batch = dict(batch)
+        is_syn = batch.pop("is_synthetic", None)
+        n = len(batch["observations"])
+        all_idx = torch.arange(n, device=batch["observations"].device)
+        real_idx = all_idx if is_syn is None else all_idx[~is_syn]
+        actor_idx = all_idx if use_synthetic_actions else real_idx
+        plain = {k: v for k, v in batch.items() if k != "bootstrap_weights"}
+
+        half = len(actor_idx) // 2
+        first_half = self._rows(plain, actor_idx[:half])
+        second_half = self._rows(plain, actor_idx[half:])
 
         weight1, weight2 = (
             self.compute_actor_weights(first_half),
@@ -187,10 +212,11 @@ class FISORAgent:
         info1 = self.actor.update(first_half, weight1, self.generator)
         info2 = self.actor.update(second_half, weight2, self.generator)
 
-        mini_batch = {k: v[: self.config.critic_batch_size] for k, v in batch.items()}
-
-        info3 = self.reward_critic.update(mini_batch)
-        info4 = self.feasibility_critic.update(mini_batch)
+        cb = self.config.critic_batch_size
+        info3 = self.reward_critic.update(self._rows(plain, real_idx[:cb]))
+        info4 = self.feasibility_critic.update(
+            self._rows(batch, all_idx[:cb]), anchors, anchor_weight
+        )
 
         self.step += 1
 

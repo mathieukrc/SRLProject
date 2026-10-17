@@ -1,6 +1,6 @@
 import copy
 import warnings
-from typing import Dict, Sequence
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import torch
@@ -10,6 +10,7 @@ from architectures.mlp import MLP
 from data.batch import Batch
 
 from .critic_config import CriticConfig
+from .anchors import anchor_lower_bound_loss
 from .loss_functions import safe_expectile_loss, soft_update
 
 FORMAT_VERSION = 1
@@ -69,7 +70,9 @@ class FeasibilityCritic:
 
         self.num_updates = 0
 
-    def update_vc(self, batch: Batch) -> Dict[str, float]:
+    def update_vc(
+        self, batch: Batch, anchors: Optional[dict] = None, anchor_weight: float = 0.0
+    ) -> Dict[str, float]:
         obs, act = batch["observations"], batch["actions"]
 
         with torch.no_grad():
@@ -83,6 +86,16 @@ class FeasibilityCritic:
 
         loss = safe_expectile_loss(qc - vc, self.config["expectile"]).mean()
 
+        anchor_info = {}
+        if anchors is not None and anchor_weight > 0:
+            va = self.safe_value(anchors["observations"])
+            a_loss = anchor_lower_bound_loss(va, anchors["h"])
+            loss = loss + anchor_weight * a_loss
+            anchor_info = {
+                "anchor_loss": a_loss.item(),
+                "anchor_violation_rate": (va < anchors["h"]).float().mean().item(),
+            }
+
         self.value_opt.zero_grad(set_to_none=True)
         loss.backward()
         self.value_opt.step()
@@ -93,6 +106,7 @@ class FeasibilityCritic:
                 "vc": vc.mean().item(),
                 "vc_max": vc.max().item(),
                 "vc_min": vc.min().item(),
+                **anchor_info,
             }
 
     def update_qc(self, batch: Batch) -> Dict[str, float]:
@@ -133,12 +147,16 @@ class FeasibilityCritic:
                 "costs": costs.mean().item(),
             }
 
-    def update(self, batch: Batch) -> Dict[str, float]:
+    def update(
+        self, batch: Batch, anchors: Optional[dict] = None, anchor_weight: float = 0.0
+    ) -> Dict[str, float]:
         mini_batch = {
-            k: v[: self.config["critic_batch_size"]] for k, v in batch.items()
+            k: v[: self.config["critic_batch_size"]]
+            for k, v in batch.items()
+            if k not in ("bootstrap_weights", "is_synthetic")
         }
 
-        value_info = self.update_vc(mini_batch)
+        value_info = self.update_vc(mini_batch, anchors, anchor_weight)
         critic_info = self.update_qc(mini_batch)
 
         self.num_updates += 1

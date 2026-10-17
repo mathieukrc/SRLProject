@@ -38,7 +38,12 @@ CFG = dict(
     eps_band=0.02,  # boundary band |V| < eps_band
 )
 
-OUT_DIR = os.path.join("controlled", "env_outputs")
+# Absolute, from $SRL_CACHE when set (cluster jobs), else the old relative default.
+OUT_DIR = (
+    os.path.join(os.path.abspath(os.environ["SRL_CACHE"]), "controlled")
+    if os.environ.get("SRL_CACHE")
+    else os.path.join("controlled", "env_outputs")
+)
 
 
 # ----------------------------------------------------------------------------

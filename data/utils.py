@@ -95,3 +95,14 @@ def load_all_dsrl() -> None:
     load_dsrl_dict(OFFLINE_CAR_CIRCLE)
     print("Loading " + OFFLINE_GOAL_POINT + "...")
     load_dsrl_dict(OFFLINE_GOAL_POINT)
+
+
+@torch.no_grad()
+def label_costs(
+    h_fn: HFn, obs: torch.Tensor, next_obs: torch.Tensor, masks: torch.Tensor
+) -> torch.Tensor:
+    """Training cost of a transition: h(s), or max(h(s), h(s')) if it is terminal.
+    Used for real data (OfflineDataset) and synthetic data alike."""
+    h_s = h_fn(obs).reshape(-1)
+    h_next = h_fn(next_obs).reshape(-1)
+    return torch.where(masks.reshape(-1) == 0, torch.maximum(h_s, h_next), h_s)
