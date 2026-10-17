@@ -1,0 +1,26 @@
+{
+  "base": {
+    "_comment": "policy-level runs; one GPU job each",
+    "discount": 0.99,
+    "expectile": 0.9,
+    "n_rounds": 2,
+    "horizon": 5,
+    "base_steps": 200000,
+    "round_steps": 50000,
+    "train_agent": true,
+    "agent_steps": 300000,
+    "eval_episodes": 20
+  },
+  "blocks": [
+    {
+      "name": "dsrl_main",
+      "axes": {
+        "env": ["car_circle", "point_goal"],
+        "coverage_percent": [100, 30],
+        "rule": ["none", "density_matched", "noise_augmentation", "combined"],
+        "budget": [50000],
+        "seed": [0, 1, 2]
+      }
+    }
+  ]
+}

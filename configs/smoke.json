@@ -1,0 +1,34 @@
+{
+  "base": {
+    "_comment": "end-to-end smoke test: run this through the real sbatch scripts first",
+    "base_steps": 500,
+    "round_steps": 200,
+    "n_rounds": 2,
+    "agent_steps": 500,
+    "eval_episodes": 2,
+    "ensemble_size": 2
+  },
+  "blocks": [
+    {
+      "name": "smoke_controlled",
+      "override": {"env": "controlled"},
+      "axes": {
+        "coverage_percent": [20],
+        "rule": ["none", "density_matched", "combined"],
+        "budget": [200],
+        "seed": [0]
+      }
+    },
+    {
+      "name": "smoke_dsrl",
+      "override": {"train_agent": true},
+      "axes": {
+        "env": ["car_circle", "point_goal"],
+        "coverage_percent": [30],
+        "rule": ["none", "combined"],
+        "budget": [200],
+        "seed": [0]
+      }
+    }
+  ]
+}

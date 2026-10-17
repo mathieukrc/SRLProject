@@ -1,0 +1,77 @@
+{
+  "base": {
+    "_comment": "discount/expectile copied from the current main.py; adjust before launching",
+    "env": "controlled",
+    "discount": 0.7,
+    "expectile": 0.9,
+    "n_rounds": 3,
+    "horizon": 5,
+    "base_steps": 100000,
+    "round_steps": 20000
+  },
+  "blocks": [
+    {
+      "name": "main",
+      "axes": {
+        "coverage_percent": [100, 50, 20, 0],
+        "rule": ["none", "random", "density_matched", "noise_augmentation",
+                 "uncertainty_guided", "violation_guided", "combined"],
+        "budget": [2000, 8000],
+        "seed": [0, 1, 2, 3, 4]
+      }
+    },
+    {
+      "name": "size_matched",
+      "override": {"variant": "size_matched"},
+      "axes": {
+        "coverage_percent": [50, 20, 0],
+        "rule": ["none", "density_matched", "combined"],
+        "budget": [8000],
+        "seed": [0, 1, 2, 3, 4]
+      }
+    },
+    {
+      "name": "binary_h",
+      "override": {"dense_h": false},
+      "axes": {
+        "coverage_percent": [20],
+        "rule": ["none", "density_matched", "combined"],
+        "budget": [8000],
+        "seed": [0, 1, 2, 3, 4]
+      }
+    },
+    {
+      "name": "components",
+      "axes": {
+        "coverage_percent": [20],
+        "rule": ["density_matched", "uncertainty_guided", "combined"],
+        "budget": [8000],
+        "components": [
+          {"use_transitions": true, "use_anchors": false},
+          {"use_transitions": false, "use_anchors": true}
+        ],
+        "seed": [0, 1, 2, 3, 4]
+      }
+    },
+    {
+      "name": "oracle_dynamics",
+      "override": {"transition_model": "simulator"},
+      "axes": {
+        "coverage_percent": [20],
+        "rule": ["density_matched", "combined"],
+        "budget": [8000],
+        "seed": [0, 1, 2, 3, 4]
+      }
+    },
+    {
+      "name": "single_round",
+      "override": {"n_rounds": 1, "round_steps": 60000},
+      "axes": {
+        "coverage_percent": [20],
+        "rule": ["none", "uncertainty_guided", "violation_guided", "combined"],
+        "budget": [8000],
+        "seed": [0, 1, 2, 3, 4]
+      }
+    }
+  ]
+}
