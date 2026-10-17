@@ -1,9 +1,7 @@
 import os
 import random
-from typing import Dict
+from typing import Callable, Dict, Optional
 
-import dsrl
-import gymnasium as gym
 import numpy as np
 import torch
 
@@ -29,10 +27,16 @@ def set_seed(seed=42):
 
 
 def list_envs() -> None:
+    import dsrl
+    import gymnasium as gym
+
     print(sorted(k for k in gym.envs.registry if k.startswith("Offline")))
 
 
 def load_dsrl_dict(name: str) -> Dict[str, np.ndarray]:
+    import dsrl
+    import gymnasium as gym
+
     env = gym.make(name)
     dataset = env.get_dataset()
 
@@ -40,7 +44,25 @@ def load_dsrl_dict(name: str) -> Dict[str, np.ndarray]:
 
 
 def cost_to_h(costs: np.ndarray, cost_scale: float = 25.0) -> np.ndarray:
-    return np.where(costs > 0, cost_scale, -1.0).astype(np.float32)
+    return np.where(np.asarray(costs) > 0, cost_scale, -1.0).astype(np.float32)
+
+
+HFn = Callable[[torch.Tensor], torch.Tensor]
+
+
+def shape_h(
+    h_fn: HFn,
+    pos_scale: float = 25.0,
+    neg_scale: float = 1.0,
+    neg_clip: Optional[float] = None,
+) -> HFn:
+    def shaped(s: torch.Tensor) -> torch.Tensor:
+        h = h_fn(s)
+        if neg_clip is not None:
+            h = torch.clamp(h, min=-neg_clip)
+        return torch.where(h > 0, h * pos_scale, h * neg_scale)
+
+    return shaped
 
 
 def compute_masks(
