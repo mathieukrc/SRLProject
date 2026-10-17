@@ -42,7 +42,7 @@ def evaluate_feasible_probability(
     res = {}
 
     for params in list(itertools.product(*param_values)):
-        v = critic.p_feasible(torch.Tensor(params))
+        v = critic.feasibility_entropy(torch.Tensor(params))
         res[tuple(params)] = v
 
     return res

@@ -195,6 +195,11 @@ class EnsembleFeasibilityCritic:
     def p_feasible(self, obs: torch.Tensor) -> torch.Tensor:
         return (self.v_h_members(obs) <= 0.0).float().mean(dim=0)
 
+    @torch.no_grad()
+    def feasibility_entropy(self, obs: torch.Tensor) -> torch.Tensor:
+        p = self.p_feasible(obs).clamp(1e-6, 1 - 1e-6)
+        return -(p * p.log2() + (1 - p) * (1 - p).log2())
+
     def state_dict(self) -> dict:
         return {
             "format_version": FORMAT_VERSION,
