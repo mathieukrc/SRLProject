@@ -1,0 +1,15 @@
+#!/bin/bash
+# Stage 1 (GPU): policy runs. The networks are small, so several runs share one GPU.
+# 1 A100 + 18 cores is the smallest gpu_a100 allocation (a quarter node).
+#SBATCH --job-name=srl-gpu
+#SBATCH --partition=gpu_a100
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=18
+#SBATCH --time=24:00:00
+source "$SLURM_SUBMIT_DIR/slurm/env.sh"
+MANIFEST=$1; COUNT=$2; WORKERS=${3:-4}
+nvidia-smi --query-gpu=name,memory.total --format=csv
+python -m experiments.run --manifest "$MANIFEST" --count "$COUNT" \
+    --chunk "$SLURM_ARRAY_TASK_ID" --workers "$WORKERS" --threads 4 --device cuda

@@ -1,0 +1,39 @@
+# DSRL tasks: learned dynamics + full policy stage -> GPU partition.
+# FISOR's paper trains much longer; check policy_steps against your SBU budget.
+name: dsrl
+base:
+  dynamics: learned
+  discount: 0.99
+  expectile: 0.9
+  K: 5
+  round0_steps: 100000
+  rounds: 3
+  steps_per_round: 20000
+  policy: true
+  policy_steps: 200000
+  eval_episodes: 10
+  tag: dsrl
+
+blocks:
+  - axes:
+      env: [point_goal, car_circle]
+      coverage: [100, 10]
+      rule: [none, density_matched, noise_augmentation, uncertainty_guided, combined]
+      budget_frac: [0.1]
+      seed: [0, 1, 2]
+
+smoke:
+  overrides:
+    round0_steps: 200
+    steps_per_round: 100
+    rounds: 1
+    log_every: 100
+    dyn_max_epochs: 2
+    dyn_steps_per_epoch: 20
+    policy_steps: 60
+    policy_batch_size: 256
+    eval_episodes: 1
+  axes:
+    coverage: [10]
+    rule: [none, uncertainty_guided]
+    seed: [0]

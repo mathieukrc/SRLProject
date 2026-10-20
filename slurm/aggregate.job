@@ -1,0 +1,10 @@
+#!/bin/bash
+# Stage 2: runs after all arrays finished (afterany: also when some tasks failed).
+#SBATCH --job-name=srl-agg
+#SBATCH --partition=rome
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --time=00:30:00
+source "$SLURM_SUBMIT_DIR/slurm/env.sh"
+python -m experiments.aggregate

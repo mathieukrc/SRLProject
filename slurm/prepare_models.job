@@ -1,0 +1,14 @@
+#!/bin/bash
+# Stage 0b: round-0 critics (+ dynamics ensembles) shared by all targeting rules.
+# Usage (via submit_all.sh): sbatch --array=0-<S-1> prepare_models.job <manifest> <S> <workers>
+#SBATCH --job-name=srl-prep
+#SBATCH --partition=rome
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --time=04:00:00
+source "$SLURM_SUBMIT_DIR/slurm/env.sh"
+MANIFEST=$1; NUM_SHARDS=$2; WORKERS=${3:-16}; DEVICE=${4:-cpu}
+python -m experiments.prepare models --manifest "$MANIFEST" \
+    --shard "$SLURM_ARRAY_TASK_ID" --num-shards "$NUM_SHARDS" \
+    --workers "$WORKERS" --device "$DEVICE"

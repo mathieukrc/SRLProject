@@ -1,0 +1,54 @@
+# Controlled environment: the main comparison. Critic-only, cheap -> CPU partition.
+name: controlled
+base:
+  env: controlled
+  dynamics: "true"
+  # discount / expectile taken from main.py; tune these on the baseline BEFORE the full run
+  discount: 0.7
+  expectile: 0.9
+  K: 5
+  round0_steps: 50000
+  rounds: 3
+  steps_per_round: 10000
+  tag: main
+
+blocks:
+  # 1. main grid: every targeting rule x coverage x budget (+ size-matched controls)
+  - axes:
+      coverage: [100, 50, 10, 0]
+      variant: [coverage, size_matched]
+      rule: [none, random, density_matched, noise_augmentation,
+             uncertainty_guided, violation_guided, combined]
+      budget_frac: [0.05, 0.2]
+      seed: [0, 1, 2, 3, 4]
+
+  # 2. ablation: learned instead of true dynamics (what dynamics-model error costs)
+  - base: {dynamics: learned, tag: learned_dynamics}
+    axes:
+      coverage: [100, 10]
+      rule: [none, density_matched, uncertainty_guided, combined]
+      budget_frac: [0.2]
+      seed: [0, 1, 2, 3, 4]
+
+  # 3. label-noise experiment
+  - base: {tag: label_noise, budget_frac: 0.2}
+    axes:
+      coverage: [10, 50]
+      rule: [density_matched, uncertainty_guided]
+      label_noise: [0.02, 0.05, 0.1]
+      seed: [0, 1, 2, 3, 4]
+
+smoke:
+  overrides:
+    round0_steps: 300
+    steps_per_round: 100
+    rounds: 2
+    log_every: 100
+    dyn_max_epochs: 2
+    dyn_steps_per_epoch: 20
+  axes:
+    coverage: [10]
+    variant: [coverage, size_matched]
+    budget_frac: [0.05]
+    label_noise: [0.05]
+    seed: [0]
