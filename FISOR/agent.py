@@ -102,7 +102,17 @@ class FISORAgent:
         act_dim: int,
         config: FISORConfig,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        feasibility_critic=None,
+        train_feasibility: bool = True,
     ) -> None:
+        """
+        feasibility_critic: an already trained critic to use instead of building a new
+            FeasibilityCritic (e.g. an EnsembleFeasibilityCritic trained with synthetic
+            data). Anything with q_h / v_h / update / state_dict works.
+        train_feasibility: False keeps the feasibility critic frozen during policy
+            training, so the synthetic-data information is not washed out by
+            further updates on real data only.
+        """
         self.device = torch.device(device)
         self.generator = torch.Generator(self.device)
 
@@ -119,7 +129,8 @@ class FISORAgent:
             device=device,
             critic_batch_size=config.critic_batch_size,
         )
-        self.feasibility_critic = FeasibilityCritic(
+        self.train_feasibility = train_feasibility
+        self.feasibility_critic = feasibility_critic or FeasibilityCritic(
             obs_dim,
             act_dim,
             config.critic_hidden_dims,
@@ -173,11 +184,19 @@ class FISORAgent:
             self.config.cost_ub,
         )
 
+    @staticmethod
+    def _rows(batch: Batch, start: int, stop: Optional[int]) -> Batch:
+        # bootstrap_weights is (K, B): slice the batch dimension, not the members.
+        return {
+            k: (v[:, start:stop] if k == "bootstrap_weights" else v[start:stop])
+            for k, v in batch.items()
+        }
+
     def update(self, batch: Batch) -> Dict[str, float]:
         half = self.config.batch_size // 2
 
-        first_half = {k: v[:half] for k, v in batch.items()}
-        second_half = {k: v[half:] for k, v in batch.items()}
+        first_half = self._rows(batch, 0, half)
+        second_half = self._rows(batch, half, None)
 
         weight1, weight2 = (
             self.compute_actor_weights(first_half),
@@ -187,10 +206,12 @@ class FISORAgent:
         info1 = self.actor.update(first_half, weight1, self.generator)
         info2 = self.actor.update(second_half, weight2, self.generator)
 
-        mini_batch = {k: v[: self.config.critic_batch_size] for k, v in batch.items()}
+        mini_batch = self._rows(batch, 0, self.config.critic_batch_size)
 
         info3 = self.reward_critic.update(mini_batch)
-        info4 = self.feasibility_critic.update(mini_batch)
+        info4 = (
+            self.feasibility_critic.update(mini_batch) if self.train_feasibility else {}
+        )
 
         self.step += 1
 

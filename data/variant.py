@@ -142,13 +142,15 @@ def _approaches_boundary(
     return approaches
 
 
-def get_coverage_variants(
+def coverage_variant_indices(
     dataset: OfflineDataset,
     coverage_percent: float,
     criterion: BoundaryCriterion,
     seed: int = 0,
-) -> OfflineDataset:
+) -> np.ndarray:
     """
+    Row indices of the coverage variant (see get_coverage_variants).
+
     Args:
         dataset: Offline dataset
         coverage_percent: Proportion of trajectories that approach the boundary to be kept
@@ -184,12 +186,33 @@ def get_coverage_variants(
     keep_traj = ~approaches
     keep_traj[kept_boundary] = True
 
-    return dataset.subset(np.flatnonzero(keep_traj[traj]))
+    return np.flatnonzero(keep_traj[traj])
 
 
-def get_size_matched_variant(
-    dataset: OfflineDataset, target_n_transitions: int, seed: int = 0
+def get_coverage_variants(
+    dataset: OfflineDataset,
+    coverage_percent: float,
+    criterion: BoundaryCriterion,
+    seed: int = 0,
 ) -> OfflineDataset:
+    """
+    A new OfflineDataset with only the kept trajectories.
+
+    A trajectory "approaches the boundary" if any of its transitions is unsafe
+    (h > threshold at the state or next state), lies within `precursor_steps` before an
+    unsafe transition, or lies within `radius` of an observed unsafe state. Trajectories
+    that never come near the boundary are always kept. coverage_percent (0-100) is the
+    share of boundary-approaching trajectories kept. With a fixed seed, variants are
+    nested: a lower coverage level is a subset of a higher one.
+    """
+    return dataset.subset(
+        coverage_variant_indices(dataset, coverage_percent, criterion, seed)
+    )
+
+
+def size_matched_variant_indices(
+    dataset: OfflineDataset, target_n_transitions: int, seed: int = 0
+) -> np.ndarray:
     """
     Removes random whole trajectories (regardless of boundary proximity) until at most
     target_n_transitions remain. Pair each coverage variant with one of these of the
@@ -210,7 +233,13 @@ def get_size_matched_variant(
         remove[t] = True
         remaining -= int(lengths[t])
 
-    return dataset.subset(np.flatnonzero(~remove[traj]))
+    return np.flatnonzero(~remove[traj])
+
+
+def get_size_matched_variant(
+    dataset: OfflineDataset, target_n_transitions: int, seed: int = 0
+) -> OfflineDataset:
+    return dataset.subset(size_matched_variant_indices(dataset, target_n_transitions, seed))
 
 
 def coverage_stats(

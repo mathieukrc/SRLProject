@@ -114,7 +114,11 @@ def _candidates(
     noise_scale: float = 0.05,
     generator: Optional[torch.Generator] = None,
     valid_fn: Optional[ValidFunction] = None,
+    uniform_frac: float = 0.5,
 ) -> torch.Tensor:
+
+    if not 0.0 <= uniform_frac <= 1.0:
+        raise ValueError("uniform_frac must be in [0, 1]")
 
     if (
         not isinstance(candidate_multiplier, (int, np.integer))
@@ -125,7 +129,7 @@ def _candidates(
 
     pool_size = max(1000, budget * candidate_multiplier)
 
-    n_uniform = pool_size // 2
+    n_uniform = int(round(pool_size * uniform_frac))
     n_noise = pool_size - n_uniform
 
     return torch.cat(
@@ -337,6 +341,7 @@ def uncertainty_guided_chain_start_picker(
     seed: Optional[int] = None,
     valid_fn: Optional[ValidFunction] = None,
     beta: Optional[float] = 1.0,
+    uniform_frac: float = 0.5,
 ) -> torch.Tensor:
     """Select candidate states with highest model uncertainty."""
 
@@ -349,7 +354,12 @@ def uncertainty_guided_chain_start_picker(
     generator = _make_generator(states, seed)
 
     candidates = _candidates(
-        states, budget, candidate_multiplier, generator=generator, valid_fn=valid_fn
+        states,
+        budget,
+        candidate_multiplier,
+        generator=generator,
+        valid_fn=valid_fn,
+        uniform_frac=uniform_frac,
     )
     scores = _scores(uncertainty_fn, candidates, "uncertainty_fn")
     indices = _select(scores, budget, generator, beta)  # was: torch.topk(...)
@@ -370,6 +380,7 @@ def violation_guided_chain_start_picker(
     valid_fn: Optional[ValidFunction] = None,
     beta: Optional[float] = 1.0,
     margin: float = 1e-3,
+    uniform_frac: float = 0.5,
 ) -> torch.Tensor:
     """Prioritize states where critic and safety model disagree."""
 
@@ -382,7 +393,12 @@ def violation_guided_chain_start_picker(
     generator = _make_generator(states, seed)
 
     candidates = _candidates(
-        states, budget, candidate_multiplier, generator=generator, valid_fn=valid_fn
+        states,
+        budget,
+        candidate_multiplier,
+        generator=generator,
+        valid_fn=valid_fn,
+        uniform_frac=uniform_frac,
     )
     viol = _violations(violation_fn, candidates)
     indices = _two_tier(viol > margin, viol, budget, generator, beta)
@@ -404,6 +420,7 @@ def combined_chain_start_picker(
     valid_fn: Optional[ValidFunction] = None,
     beta: Optional[float] = 1.0,
     margin: float = 1e-3,
+    uniform_frac: float = 0.5,
 ) -> torch.Tensor:
     """
     First prioritize violating states.
@@ -419,7 +436,12 @@ def combined_chain_start_picker(
     generator = _make_generator(states, seed)
 
     candidates = _candidates(
-        states, budget, candidate_multiplier, generator=generator, valid_fn=valid_fn
+        states,
+        budget,
+        candidate_multiplier,
+        generator=generator,
+        valid_fn=valid_fn,
+        uniform_frac=uniform_frac,
     )
     uncertainty = _scores(uncertainty_fn, candidates, "uncertainty_fn")
     viol = _violations(violation_fn, candidates)

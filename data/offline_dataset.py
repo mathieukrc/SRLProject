@@ -27,6 +27,10 @@ class OfflineDataset:
     ) -> None:
         self.device = torch.device(device)
         self.h_fn = h_fn
+        self.cost_scale = cost_scale
+        self.clip_eps = clip_eps
+        self.timeout_is_done = timeout_is_done
+        self.seed = seed
         data_dict = dict(dataset_dict)
 
         masks = compute_masks(
@@ -52,6 +56,9 @@ class OfflineDataset:
             "costs": np.asarray(costs).reshape(-1),
             "rewards": data_dict["rewards"],
             "masks": masks.reshape(-1),
+            "is_synthetic": np.asarray(
+                data_dict.get("is_synthetic", np.zeros(len(masks))), dtype=np.float32
+            ).reshape(-1),
         }
 
         n = len(arrays["observations"])
@@ -64,11 +71,11 @@ class OfflineDataset:
             for k, v in arrays.items()
         }
 
-        self.set_bootstrap_weights(n_members)
-
         self._generator = torch.Generator(device=self.device)
         if seed is not None:
             self._generator.manual_seed(seed)
+
+        self.set_bootstrap_weights(n_members)
 
     @staticmethod
     @torch.no_grad()
@@ -103,12 +110,25 @@ class OfflineDataset:
         return torch.where(terminal, torch.maximum(h_s, h_next), h_s).numpy()
 
     def set_bootstrap_weights(self, num_members: int) -> None:
+        self.data["bootstrap_weights"] = self._draw_bootstrap_weights(
+            num_members, len(self)
+        )
+
+    def _draw_bootstrap_weights(self, num_members: int, n: int) -> torch.Tensor:
         if num_members == 1:
-            self.data["bootstrap_weights"] = torch.ones((1, len(self))).to(self.device)
-        else:
-            self.data["bootstrap_weights"] = torch.poisson(
-                torch.ones((num_members, len(self)))
-            ).to(self.device)
+            return torch.ones((1, n), device=self.device)
+        # Drawn on the dataset's own generator so the weights are reproducible
+        # from the seed alone (not from whatever the global RNG state happens to be).
+        rates = torch.ones((num_members, n), device=self.device)
+        return torch.poisson(rates, generator=self._generator)
+
+    @property
+    def n_members(self) -> int:
+        return int(self.data["bootstrap_weights"].shape[0])
+
+    @property
+    def n_synthetic(self) -> int:
+        return int(self.data["is_synthetic"].sum().item())
 
     def __len__(self) -> int:
         return self.data["observations"].shape[0]
@@ -127,13 +147,69 @@ class OfflineDataset:
             }
         )
 
-    def subset(self, index: np.ndarray):
-        sub = copy.deepcopy(self)
-        index_tensor = torch.tensor(index, device=self.device)
+    def subset(self, index: np.ndarray) -> "OfflineDataset":
+        index_tensor = torch.as_tensor(np.asarray(index), device=self.device).long()
 
+        # Shallow-copy the object and only slice the tensors: a deepcopy would first
+        # duplicate the full dataset in memory, which matters for the DSRL datasets.
+        sub = copy.copy(self)
         sub.data = {
             k: (v[:, index_tensor] if k == "bootstrap_weights" else v[index_tensor])
             for k, v in self.data.items()
         }
+        sub._generator = torch.Generator(device=self.device)
+        sub._generator.set_state(self._generator.get_state())
 
         return sub
+
+    def real_only(self) -> "OfflineDataset":
+        """The rows that came from the offline dataset (no synthetic transitions)."""
+        keep = (self.data["is_synthetic"] == 0).nonzero().reshape(-1)
+        return self.subset(keep.cpu().numpy())
+
+    def with_synthetic(
+        self, raw: Dict[str, np.ndarray], label_noise: float = 0.0
+    ) -> "OfflineDataset":
+        """
+        Returns a new dataset with the synthetic transitions in `raw` appended.
+
+        `raw` uses the same keys as the offline data ('observations', 'actions',
+        'next_observations', 'rewards', 'costs', 'terminals', 'timeouts'). It is passed
+        through the same constructor path as the real data, so h is computed by the same
+        h_fn and terminal handling. Synthetic chains should set timeouts = 0 at the
+        chain end: that is a truncation, so the critic must bootstrap from V_h(s_k).
+
+        label_noise: std of Gaussian noise added to the synthetic h labels (in h units),
+            for the label-noise experiment. Real rows are never perturbed.
+        """
+        n_new = len(raw["observations"])
+        if n_new == 0:
+            return self.subset(np.arange(len(self)))
+
+        raw = dict(raw)
+        raw["is_synthetic"] = np.ones(n_new, dtype=np.float32)
+        new = OfflineDataset(
+            raw,
+            cost_scale=self.cost_scale,
+            clip_eps=self.clip_eps,
+            device=str(self.device),
+            n_members=1,
+            timeout_is_done=self.timeout_is_done,
+            h_fn=self.h_fn,
+        )
+        new_data = dict(new.data)
+        if label_noise > 0:
+            noise = torch.randn(
+                new_data["costs"].shape, device=self.device, generator=self._generator
+            )
+            new_data["costs"] = new_data["costs"] + label_noise * noise
+        new_data["bootstrap_weights"] = self._draw_bootstrap_weights(
+            self.n_members, n_new
+        )
+
+        merged = copy.copy(self)
+        merged.data = {
+            k: torch.cat((v, new_data[k]), dim=1 if k == "bootstrap_weights" else 0)
+            for k, v in self.data.items()
+        }
+        return merged

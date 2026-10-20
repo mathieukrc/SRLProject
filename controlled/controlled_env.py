@@ -38,7 +38,11 @@ CFG = dict(
     eps_band=0.02,  # boundary band |V| < eps_band
 )
 
-OUT_DIR = os.path.join("controlled", "env_outputs")
+# Absolute path, so jobs work from any working directory. Override with SRL_CONTROLLED_DIR.
+OUT_DIR = os.environ.get(
+    "SRL_CONTROLLED_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "env_outputs"),
+)
 
 
 # ----------------------------------------------------------------------------
