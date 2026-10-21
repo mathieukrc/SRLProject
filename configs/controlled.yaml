@@ -4,7 +4,7 @@ base:
   env: controlled
   dynamics: "true"
   # discount / expectile taken from main.py; tune these on the baseline BEFORE the full run
-  discount: 0.7
+  discount: 0.9
   expectile: 0.9
   K: 5
   round0_steps: 50000

@@ -8,6 +8,6 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --time=08:00:00
 source "$SLURM_SUBMIT_DIR/slurm/env.sh"
-MANIFEST=$1; COUNT=$2; WORKERS=${3:-16}
+MANIFEST=$1; COUNT=$2; WORKERS=${3:-16}; DEVICE=${4:-cpu}
 python -m experiments.run --manifest "$MANIFEST" --count "$COUNT" \
-    --chunk "$SLURM_ARRAY_TASK_ID" --workers "$WORKERS" --threads 1 --device cpu
+    --chunk "$SLURM_ARRAY_TASK_ID" --workers "$WORKERS" --threads 1 --device "$DEVICE"

@@ -43,13 +43,15 @@ def calibration(p_feasible: np.ndarray, truly_feasible: np.ndarray, n_bins: int 
 
     pred = p >= 0.5
     wrong = pred != y.astype(bool)
-    uncertainty = 1 - np.abs(2 * p - 1)  # 1 at p = 0.5, 0 at p in {0, 1}
-    hi = uncertainty >= np.median(uncertainty)
+    # With K members p only takes K+1 values, so a median split is degenerate. Split on
+    # whether the members agree instead: is the ensemble's disagreement informative?
+    agree = (p == 0) | (p == 1)
     return {
         "ece": float(ece),
         "brier": float(np.mean((p - y) ** 2)),
-        "err_rate_uncertain_half": float(wrong[hi].mean()) if hi.any() else float("nan"),
-        "err_rate_certain_half": float(wrong[~hi].mean()) if (~hi).any() else float("nan"),
+        "frac_members_disagree": float((~agree).mean()),
+        "err_rate_members_agree": float(wrong[agree].mean()) if agree.any() else float("nan"),
+        "err_rate_members_disagree": float(wrong[~agree].mean()) if (~agree).any() else float("nan"),
     }
 
 

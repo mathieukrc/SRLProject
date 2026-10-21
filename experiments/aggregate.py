@@ -21,6 +21,8 @@ import numpy as np
 from . import paths
 
 GROUP = ["env", "variant", "coverage", "rule", "budget_frac", "label_noise", "dynamics", "round", "eval_set", "metric"]
+# Config fields that never define a condition: averaged over (seed) or irrelevant.
+NOT_A_CONDITION = {"seed", "tag", "log_every"}
 
 
 def collect(tag=None):
@@ -43,14 +45,31 @@ def collect(tag=None):
             continue
         with open(os.path.join(d, "metrics.json")) as f:
             m = json.load(f)
+        flat = {k: (str(v) if isinstance(v, (list, dict)) else v) for k, v in cfg.items()}
         for r in m["records"]:
-            rows.append({"run_id": meta["run_id"], "seed": cfg["seed"], "git": meta.get("git"),
-                         **{k: cfg[k] for k in GROUP if k in cfg}, **r})
+            rows.append({"run_id": meta["run_id"], "git": meta.get("git"), **flat, **r})
     return pd.DataFrame(rows), pd.DataFrame(status)
 
 
+def condition_columns(long):
+    """GROUP plus every other config field that takes more than one value among the
+    runs (e.g. discount in a discount sweep), so different settings are never averaged
+    together. Only seeds are averaged over."""
+    from experiments.config import ExperimentConfig
+    import dataclasses
+
+    fields = [f.name for f in dataclasses.fields(ExperimentConfig)]
+    extra = [k for k in fields
+             if k in long.columns and k not in GROUP and k not in NOT_A_CONDITION
+             and long[k].astype(str).nunique() > 1]
+    return GROUP[:-3] + extra + GROUP[-3:], extra
+
+
 def summarise(long):
-    g = long.groupby(GROUP, dropna=False)["value"]
+    cols, extra = condition_columns(long)
+    if extra:
+        print("also grouping by:", ", ".join(extra))
+    g = long.groupby(cols, dropna=False)["value"]
     s = g.agg(["mean", "std", "count"]).reset_index()
     s["ci95"] = 1.96 * s["std"].fillna(0) / np.sqrt(s["count"].clip(lower=1))
     return s
@@ -101,7 +120,9 @@ def main(argv=None) -> int:
     if long.empty:
         print("no finished runs yet")
         return 0
-    long.to_csv(os.path.join(out, "long.csv"), index=False)
+    cols, _ = condition_columns(long)
+    keep = ["run_id", "seed", "git"] + cols + [c for c in ("value",) if c in long]
+    long[keep].to_csv(os.path.join(out, "long.csv"), index=False)
     s = summarise(long)
     s.to_csv(os.path.join(out, "summary.csv"), index=False)
     plot(s, os.path.join(out, "plots"))

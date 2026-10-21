@@ -3,7 +3,7 @@ name: controlled_policy
 base:
   env: controlled
   dynamics: "true"
-  discount: 0.7
+  discount: 0.9
   expectile: 0.9
   round0_steps: 50000
   rounds: 3
